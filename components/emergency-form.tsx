@@ -65,16 +65,20 @@ const FILA = [
 ]
 
 // ─── Types ─────────────────────────────────────────────────────────────────
-interface FormState {
-  atendente: string
-  grupoEmpresa: string
-  solicitacaoEmergencial: string
-  solicitacoes: string
+interface Passageiro {
   sobrenomeNome: string
   localizador: string
   matricula: string
   centroCusto: string
   observacoes: string
+}
+
+interface FormState {
+  atendente: string
+  grupoEmpresa: string
+  solicitacaoEmergencial: string
+  solicitacoes: string
+  passageiros: Passageiro[]
   fornecedor: string
   canal: string
   servico: string
@@ -85,30 +89,38 @@ interface FormState {
   emailEnviado: boolean
 }
 
-interface FormErrors {
-  atendente?: string
-  grupoEmpresa?: string
-  solicitacoes?: string
+interface PassageiroErrors {
   sobrenomeNome?: string
   localizador?: string
   matricula?: string
   centroCusto?: string
+}
+
+interface FormErrors {
+  atendente?: string
+  grupoEmpresa?: string
+  solicitacoes?: string
+  passageiros?: PassageiroErrors[]
   fornecedor?: string
   servico?: string
   localReserva?: string
   justificativa?: string
 }
 
-const INITIAL_STATE: FormState = {
-  atendente: "",
-  grupoEmpresa: "",
-  solicitacaoEmergencial: "",
-  solicitacoes: "",
+const createEmptyPassageiro = (): Passageiro => ({
   sobrenomeNome: "",
   localizador: "",
   matricula: "",
   centroCusto: "",
   observacoes: "",
+})
+
+const INITIAL_STATE: FormState = {
+  atendente: "",
+  grupoEmpresa: "",
+  solicitacaoEmergencial: "",
+  solicitacoes: "",
+  passageiros: [createEmptyPassageiro()],
   fornecedor: "",
   canal: "",
   servico: "",
@@ -175,6 +187,7 @@ export function EmergencyForm() {
   const [submitting, setSubmitting] = useState(false)
   const [success, setSuccess] = useState(false)
   const [submitError, setSubmitError] = useState("")
+  const [qtdPassageiros, setQtdPassageiros] = useState(1)
 
   function set<K extends keyof FormState>(key: K, value: FormState[K]) {
     setForm((prev) => ({ ...prev, [key]: value }))
@@ -183,15 +196,65 @@ export function EmergencyForm() {
     }
   }
 
+  function setPassageiro(index: number, field: keyof Passageiro, value: string) {
+    setForm((prev) => {
+      const newPassageiros = [...prev.passageiros]
+      newPassageiros[index] = { ...newPassageiros[index], [field]: value }
+      return { ...prev, passageiros: newPassageiros }
+    })
+    // Clear error for this specific passenger field
+    if (errors.passageiros?.[index]?.[field as keyof PassageiroErrors]) {
+      setErrors((prev) => {
+        const newPassageiroErrors = [...(prev.passageiros || [])]
+        if (newPassageiroErrors[index]) {
+          newPassageiroErrors[index] = { ...newPassageiroErrors[index], [field]: undefined }
+        }
+        return { ...prev, passageiros: newPassageiroErrors }
+      })
+    }
+  }
+
+  function handleQtdChange(newQtd: number) {
+    const clampedQtd = Math.max(1, Math.min(40, newQtd))
+    setQtdPassageiros(clampedQtd)
+    
+    setForm((prev) => {
+      const currentPassageiros = prev.passageiros
+      if (clampedQtd > currentPassageiros.length) {
+        // Add new empty passengers
+        const toAdd = clampedQtd - currentPassageiros.length
+        const newPassageiros = [...currentPassageiros]
+        for (let i = 0; i < toAdd; i++) {
+          newPassageiros.push(createEmptyPassageiro())
+        }
+        return { ...prev, passageiros: newPassageiros }
+      } else if (clampedQtd < currentPassageiros.length) {
+        // Remove passengers from the end
+        return { ...prev, passageiros: currentPassageiros.slice(0, clampedQtd) }
+      }
+      return prev
+    })
+  }
+
   function validate(): FormErrors {
     const e: FormErrors = {}
     if (!form.atendente) e.atendente = "Campo obrigatório"
     if (!form.grupoEmpresa) e.grupoEmpresa = "Campo obrigatório"
     if (!form.solicitacoes) e.solicitacoes = "Campo obrigatório"
-    if (!form.sobrenomeNome.trim()) e.sobrenomeNome = "Campo obrigatório"
-    if (!form.localizador.trim()) e.localizador = "Campo obrigatório"
-    if (!form.matricula.trim()) e.matricula = "Campo obrigatório"
-    if (!form.centroCusto.trim()) e.centroCusto = "Campo obrigatório"
+    
+    // Validate each passenger
+    const passageiroErrors: PassageiroErrors[] = []
+    let hasPassageiroError = false
+    form.passageiros.forEach((p, i) => {
+      const pErr: PassageiroErrors = {}
+      if (!p.sobrenomeNome.trim()) { pErr.sobrenomeNome = "Campo obrigatório"; hasPassageiroError = true }
+      if (!p.localizador.trim()) { pErr.localizador = "Campo obrigatório"; hasPassageiroError = true }
+      if (!p.matricula.trim()) { pErr.matricula = "Campo obrigatório"; hasPassageiroError = true }
+      if (!p.centroCusto.trim()) { pErr.centroCusto = "Campo obrigatório"; hasPassageiroError = true }
+      passageiroErrors[i] = pErr
+    })
+    if (hasPassageiroError) e.passageiros = passageiroErrors
+    
     if (!form.fornecedor) e.fornecedor = "Campo obrigatório"
     if (!form.servico) e.servico = "Campo obrigatório"
     if (!form.localReserva) e.localReserva = "Campo obrigatório"
@@ -207,9 +270,26 @@ export function EmergencyForm() {
     if (Object.keys(errs).length > 0) {
       setErrors(errs)
       // scroll to first error
-      const firstKey = Object.keys(errs)[0]
-      const el = document.getElementById(firstKey)
-      el?.scrollIntoView({ behavior: "smooth", block: "center" })
+      let firstErrorEl: HTMLElement | null = null
+      if (errs.atendente) firstErrorEl = document.getElementById("atendente")
+      else if (errs.grupoEmpresa) firstErrorEl = document.getElementById("grupoEmpresa")
+      else if (errs.solicitacoes) firstErrorEl = document.getElementById("solicitacoes")
+      else if (errs.passageiros) {
+        // Find first passenger with error
+        for (let i = 0; i < errs.passageiros.length; i++) {
+          const pErr = errs.passageiros[i]
+          if (pErr?.sobrenomeNome) { firstErrorEl = document.getElementById(`sobrenomeNome-${i}`); break }
+          if (pErr?.localizador) { firstErrorEl = document.getElementById(`localizador-${i}`); break }
+          if (pErr?.matricula) { firstErrorEl = document.getElementById(`matricula-${i}`); break }
+          if (pErr?.centroCusto) { firstErrorEl = document.getElementById(`centroCusto-${i}`); break }
+        }
+      }
+      else if (errs.fornecedor) firstErrorEl = document.getElementById("fornecedor")
+      else if (errs.servico) firstErrorEl = document.getElementById("servico")
+      else if (errs.localReserva) firstErrorEl = document.getElementById("localReserva")
+      else if (errs.justificativa) firstErrorEl = document.getElementById("justificativa")
+      
+      firstErrorEl?.scrollIntoView({ behavior: "smooth", block: "center" })
       return
     }
 
@@ -220,11 +300,13 @@ export function EmergencyForm() {
         grupo_empresa: form.grupoEmpresa,
         solicitacao_emergencial: form.solicitacaoEmergencial,
         solicitacoes: form.solicitacoes,
-        sobrenome_nome_passageiro: form.sobrenomeNome,
-        localizador: form.localizador,
-        matricula: form.matricula,
-        centro_de_custo: form.centroCusto,
-        observacoes: form.observacoes,
+        passageiros: form.passageiros.map((p) => ({
+          nome: p.sobrenomeNome,
+          localizador: p.localizador,
+          matricula: p.matricula,
+          centro_de_custo: p.centroCusto,
+          observacoes: p.observacoes,
+        })),
         fornecedor_emergencial: form.fornecedor,
         canal_de_atendimento: form.canal,
         servico_emergencial: form.servico,
@@ -244,6 +326,7 @@ export function EmergencyForm() {
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
       setSuccess(true)
       setForm(INITIAL_STATE)
+      setQtdPassageiros(1)
     } catch {
       setSubmitError("Erro ao enviar formulário. Tente novamente.")
     } finally {
@@ -382,92 +465,119 @@ export function EmergencyForm() {
               {/* ── Seção: Passageiro ─────────────────────────────────────── */}
               <SectionDivider title="Dados do Passageiro" />
 
-              {/* 5. Sobrenome/Nome Passageiro */}
+              {/* Quantidade de Passageiros */}
               <FormField
-                label="Sobrenome/Nome Passageiro"
-                required
-                error={errors.sobrenomeNome}
-                htmlFor="sobrenomeNome"
+                label="Quantidade de Passageiros"
+                htmlFor="qtdPassageiros"
               >
                 <input
-                  id="sobrenomeNome"
-                  type="text"
-                  value={form.sobrenomeNome}
-                  onChange={(e) => set("sobrenomeNome", e.target.value)}
-                  placeholder="Ex: Silva / João"
-                  required
-                  className={cn(inputBase, errors.sobrenomeNome && inputError)}
+                  id="qtdPassageiros"
+                  type="number"
+                  min={1}
+                  max={40}
+                  value={qtdPassageiros}
+                  onChange={(e) => handleQtdChange(parseInt(e.target.value) || 1)}
+                  className={cn(inputBase, "w-32")}
                 />
               </FormField>
 
-              {/* 6 & 7 — Two columns on wider screens */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                {/* 6. Localizador */}
-                <FormField
-                  label="Localizador"
-                  required
-                  error={errors.localizador}
-                  htmlFor="localizador"
+              {/* Dynamic Passenger Groups */}
+              {form.passageiros.map((passageiro, index) => (
+                <div 
+                  key={index} 
+                  className="border border-gray-200 rounded-lg p-4 flex flex-col gap-4"
+                  style={{ background: "#fafafa" }}
                 >
-                  <input
-                    id="localizador"
-                    type="text"
-                    value={form.localizador}
-                    onChange={(e) => set("localizador", e.target.value)}
-                    placeholder="Ex: ABC123"
+                  <h3 className="text-sm font-semibold" style={{ color: "#404653" }}>
+                    Passageiro {index + 1}
+                  </h3>
+
+                  {/* Sobrenome/Nome Passageiro */}
+                  <FormField
+                    label="Sobrenome/Nome Passageiro"
                     required
-                    className={cn(inputBase, errors.localizador && inputError)}
-                  />
-                </FormField>
+                    error={errors.passageiros?.[index]?.sobrenomeNome}
+                    htmlFor={`sobrenomeNome-${index}`}
+                  >
+                    <input
+                      id={`sobrenomeNome-${index}`}
+                      type="text"
+                      value={passageiro.sobrenomeNome}
+                      onChange={(e) => setPassageiro(index, "sobrenomeNome", e.target.value)}
+                      placeholder="Ex: Silva / João"
+                      required
+                      className={cn(inputBase, errors.passageiros?.[index]?.sobrenomeNome && inputError)}
+                    />
+                  </FormField>
 
-                {/* 7. Matrícula */}
-                <FormField
-                  label="Matrícula"
-                  required
-                  error={errors.matricula}
-                  htmlFor="matricula"
-                >
-                  <input
-                    id="matricula"
-                    type="text"
-                    value={form.matricula}
-                    onChange={(e) => set("matricula", e.target.value)}
-                    placeholder="Ex: 00123"
+                  {/* Localizador & Matrícula — Two columns */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <FormField
+                      label="Localizador"
+                      required
+                      error={errors.passageiros?.[index]?.localizador}
+                      htmlFor={`localizador-${index}`}
+                    >
+                      <input
+                        id={`localizador-${index}`}
+                        type="text"
+                        value={passageiro.localizador}
+                        onChange={(e) => setPassageiro(index, "localizador", e.target.value)}
+                        placeholder="Ex: ABC123"
+                        required
+                        className={cn(inputBase, errors.passageiros?.[index]?.localizador && inputError)}
+                      />
+                    </FormField>
+
+                    <FormField
+                      label="Matrícula"
+                      required
+                      error={errors.passageiros?.[index]?.matricula}
+                      htmlFor={`matricula-${index}`}
+                    >
+                      <input
+                        id={`matricula-${index}`}
+                        type="text"
+                        value={passageiro.matricula}
+                        onChange={(e) => setPassageiro(index, "matricula", e.target.value)}
+                        placeholder="Ex: 00123"
+                        required
+                        className={cn(inputBase, errors.passageiros?.[index]?.matricula && inputError)}
+                      />
+                    </FormField>
+                  </div>
+
+                  {/* Centro de Custo */}
+                  <FormField
+                    label="Centro de Custo"
                     required
-                    className={cn(inputBase, errors.matricula && inputError)}
-                  />
-                </FormField>
-              </div>
+                    error={errors.passageiros?.[index]?.centroCusto}
+                    htmlFor={`centroCusto-${index}`}
+                  >
+                    <input
+                      id={`centroCusto-${index}`}
+                      type="text"
+                      value={passageiro.centroCusto}
+                      onChange={(e) => setPassageiro(index, "centroCusto", e.target.value)}
+                      placeholder="Ex: CC-0042"
+                      required
+                      className={cn(inputBase, errors.passageiros?.[index]?.centroCusto && inputError)}
+                    />
+                  </FormField>
 
-              {/* 8. Centro de Custo */}
-              <FormField
-                label="Centro de Custo"
-                required
-                error={errors.centroCusto}
-                htmlFor="centroCusto"
-              >
-                <input
-                  id="centroCusto"
-                  type="text"
-                  value={form.centroCusto}
-                  onChange={(e) => set("centroCusto", e.target.value)}
-                  placeholder="Ex: CC-0042"
-                  required
-                  className={cn(inputBase, errors.centroCusto && inputError)}
-                />
-              </FormField>
-
-              {/* 9. Observações */}
-              <FormField label="Observações" htmlFor="observacoes">
-                <textarea
-                  id="observacoes"
-                  rows={3}
-                  value={form.observacoes}
-                  onChange={(e) => set("observacoes", e.target.value)}
-                  placeholder="Informações adicionais..."
-                  className={cn(inputBase, "resize-none")}
-                />
-              </FormField>
+                  {/* Observações */}
+                  <FormField label="Observações" htmlFor={`observacoes-${index}`}>
+                    <textarea
+                      id={`observacoes-${index}`}
+                      rows={2}
+                      value={passageiro.observacoes}
+                      onChange={(e) => setPassageiro(index, "observacoes", e.target.value)}
+                      placeholder="Informações adicionais..."
+                      className={cn(inputBase, "resize-none")}
+                    />
+                  </FormField>
+                </div>
+              ))}
 
               {/* ── Seção: Emergencial ────────────────────────────────────── */}
               <SectionDivider title="Dados Emergenciais" />
